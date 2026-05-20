@@ -1,9 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
+// ============ رابط السيرفر على الإنترنت (Render) ============
+const API_URL = 'https://mds-backend-final.onrender.com/api';
+
 const api = axios.create({
-  baseURL: 'http://localhost:5000/api'
+  baseURL: API_URL
 });
 
 api.interceptors.request.use((config) => {
@@ -31,6 +34,12 @@ function App() {
   const [stats, setStats] = useState({});
   const [adminOrders, setAdminOrders] = useState([]);
   const [adminMedicines, setAdminMedicines] = useState([]);
+  const [drivers, setDrivers] = useState([]);
+  const [pendingOrders, setPendingOrders] = useState([]);
+  const [awaitingDriverOrders, setAwaitingDriverOrders] = useState([]);
+  const [reports, setReports] = useState(null);
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
 
   // ============ نموذج التسجيل ============
   const [registerData, setRegisterData] = useState({
@@ -53,9 +62,22 @@ function App() {
   const [deliveryFee, setDeliveryFee] = useState(0);
   const DELIVERY_RATE_PER_KM = 1000;
 
+  // ============ جلب التنبيهات ============
+  const fetchNotifications = async () => {
+    if (!user) return;
+    try {
+      const res = await api.get(`/orders/notifications/${user.id}/${user.role}`);
+      setNotifications(res.data);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   // ============ تحميل البيانات حسب الدور ============
   useEffect(() => {
     if (user) {
+      fetchNotifications();
+      const interval = setInterval(fetchNotifications, 30000);
       if (user.role === 'company') {
         fetchMedicines();
       } else if (user.role === 'pharmacy') {
@@ -70,7 +92,11 @@ function App() {
         fetchAdminUsers();
         fetchAdminOrders();
         fetchAdminMedicines();
+        fetchPendingOrders();
+        fetchAwaitingDriverOrders();
+        fetchDrivers();
       }
+      return () => clearInterval(interval);
     }
   }, [user]);
 
@@ -129,6 +155,42 @@ function App() {
     try {
       const res = await api.get('/admin/medicines');
       setAdminMedicines(res.data);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const fetchPendingOrders = async () => {
+    try {
+      const res = await api.get('/admin/orders/pending');
+      setPendingOrders(res.data);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const fetchAwaitingDriverOrders = async () => {
+    try {
+      const res = await api.get('/admin/orders/awaiting-driver');
+      setAwaitingDriverOrders(res.data);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const fetchDrivers = async () => {
+    try {
+      const res = await api.get('/admin/drivers');
+      setDrivers(res.data);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const fetchReports = async (startDate, endDate) => {
+    try {
+      const res = await api.get(`/admin/reports?startDate=${startDate || ''}&endDate=${endDate || ''}`);
+      setReports(res.data);
     } catch (error) {
       console.error(error);
     }
@@ -288,44 +350,75 @@ function App() {
       setCart([]);
       setDeliveryFee(0);
       setDistance(0);
-      setMessage('✅ تم إنشاء الطلب');
+      setMessage('✅ تم إنشاء الطلب، في انتظار موافقة الإدارة');
       fetchOrders('pharmacy');
     } catch (error) {
       setMessage('❌ خطأ في إنشاء الطلب');
     }
   };
 
-  // ============ تحديث حالة الطلب (للسائق) ============
-  const updateOrderStatus = async (orderId, status) => {
+  // ============ تحديث حالة الطلب ============
+  const adminApproveOrder = async (orderId) => {
     try {
-      await api.put(`/orders/${orderId}/status`, { status, driver: user.id });
+      await api.put(`/admin/orders/${orderId}/approve`);
+      fetchPendingOrders();
+      fetchAwaitingDriverOrders();
+      setMessage('✅ تمت الموافقة على الطلب');
+    } catch (error) {
+      setMessage('❌ خطأ في الموافقة');
+    }
+  };
+
+  const adminRejectOrder = async (orderId) => {
+    const reason = prompt('سبب الرفض:');
+    try {
+      await api.put(`/admin/orders/${orderId}/reject`, { reason });
+      fetchPendingOrders();
+      setMessage('❌ تم رفض الطلب');
+    } catch (error) {
+      setMessage('❌ خطأ في الرفض');
+    }
+  };
+
+  const assignDriver = async (orderId, driverId) => {
+    try {
+      await api.put(`/admin/orders/${orderId}/assign-driver`, { driverId });
+      fetchAwaitingDriverOrders();
+      fetchAdminOrders();
+      setMessage('✅ تم تعيين السائق');
+    } catch (error) {
+      setMessage('❌ خطأ في تعيين السائق');
+    }
+  };
+
+  const driverStartDelivery = async (orderId) => {
+    try {
+      await api.put(`/orders/${orderId}/driver-on-way`);
       fetchOrders('driver');
-      setMessage('✅ تم تحديث الحالة');
+      setMessage('🚚 تم بدء التوصيل');
     } catch (error) {
-      setMessage('❌ خطأ في التحديث');
+      setMessage('❌ خطأ');
     }
   };
 
-  // ============ إدارة المستخدمين (لأدمن) ============
-  const toggleUserStatus = async (userId, currentStatus) => {
+  const driverConfirmDelivered = async (orderId) => {
     try {
-      await api.put(`/admin/users/${userId}`, { isActive: !currentStatus });
-      fetchAdminUsers();
-      setMessage('✅ تم تحديث حالة المستخدم');
+      await api.put(`/orders/${orderId}/delivered`);
+      fetchOrders('driver');
+      setMessage('✅ تم توصيل الطلب، في انتظار تأكيد الصيدلية');
     } catch (error) {
-      setMessage('❌ خطأ في التحديث');
+      setMessage('❌ خطأ');
     }
   };
 
-  const deleteUser = async (userId) => {
-    if (window.confirm('هل أنت متأكد من حذف هذا المستخدم؟')) {
-      try {
-        await api.delete(`/admin/users/${userId}`);
-        fetchAdminUsers();
-        setMessage('✅ تم حذف المستخدم');
-      } catch (error) {
-        setMessage('❌ خطأ في الحذف');
-      }
+  const pharmacyConfirmReceipt = async (orderId) => {
+    try {
+      await api.put(`/orders/${orderId}/pharmacy-confirm`);
+      await api.put(`/orders/${orderId}/complete`);
+      fetchOrders('pharmacy');
+      setMessage('✅ تم تأكيد الاستلام');
+    } catch (error) {
+      setMessage('❌ خطأ');
     }
   };
 
@@ -358,6 +451,29 @@ function App() {
       const scanner = new Html5QrcodeScanner('reader', { fps: 10, qrbox: { width: 250, height: 250 } }, false);
       scanner.render(onScanSuccess, () => {});
     }, 100);
+  };
+
+  // ============ إدارة المستخدمين (لأدمن) ============
+  const toggleUserStatus = async (userId, currentStatus) => {
+    try {
+      await api.put(`/admin/users/${userId}`, { isActive: !currentStatus });
+      fetchAdminUsers();
+      setMessage('✅ تم تحديث حالة المستخدم');
+    } catch (error) {
+      setMessage('❌ خطأ في التحديث');
+    }
+  };
+
+  const deleteUser = async (userId) => {
+    if (window.confirm('هل أنت متأكد من حذف هذا المستخدم؟')) {
+      try {
+        await api.delete(`/admin/users/${userId}`);
+        fetchAdminUsers();
+        setMessage('✅ تم حذف المستخدم');
+      } catch (error) {
+        setMessage('❌ خطأ في الحذف');
+      }
+    }
   };
 
   // ============ واجهة تسجيل الدخول / التسجيل ============
@@ -420,68 +536,170 @@ function App() {
 
   // ============ لوحة تحكم الأدمن ============
   if (user.role === 'admin') {
+    const [adminTab, setAdminTab] = useState('dashboard');
+    const [dateRange, setDateRange] = useState({ start: '', end: '' });
+
     return (
       <div style={{ padding: '20px', fontFamily: 'Arial', direction: 'rtl' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
           <h1>👑 M.D.S pharmacies - لوحة التحكم</h1>
-          <button onClick={handleLogout} style={{ padding: '10px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>تسجيل خروج</button>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            {notifications.length > 0 && (
+              <button onClick={() => setShowNotifications(!showNotifications)} style={{ position: 'relative', padding: '10px', background: '#ffc107', border: 'none', borderRadius: '50%', cursor: 'pointer', fontSize: '20px' }}>
+                🔔 {notifications.length > 0 && <span style={{ position: 'absolute', top: '-5px', right: '-5px', background: 'red', color: 'white', borderRadius: '50%', padding: '2px 6px', fontSize: '12px' }}>{notifications.length}</span>}
+              </button>
+            )}
+            <button onClick={handleLogout} style={{ padding: '10px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>تسجيل خروج</button>
+          </div>
         </div>
         <h3>مرحباً {user.name}</h3>
 
-        {/* الإحصائيات */}
-        <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', margin: '20px 0' }}>
-          <div style={{ background: '#17a2b8', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>🏥 الصيدليات: {stats.totalPharmacies || 0}</div>
-          <div style={{ background: '#28a745', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>🏭 شركات الأدوية: {stats.totalCompanies || 0}</div>
-          <div style={{ background: '#ffc107', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center' }}>🚗 السائقين: {stats.totalDrivers || 0}</div>
-          <div style={{ background: '#007bff', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>💊 الأدوية: {stats.totalMedicines || 0}</div>
-          <div style={{ background: '#6c5ce7', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>📦 الطلبات: {stats.totalOrders || 0}</div>
-          <div style={{ background: '#e84393', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>💰 الإيرادات: {stats.totalRevenue?.toLocaleString() || 0} ﷼</div>
-        </div>
+        {showNotifications && (
+          <div style={{ position: 'fixed', top: '80px', right: '20px', width: '300px', background: 'white', border: '1px solid #ddd', borderRadius: '10px', padding: '15px', zIndex: 1000, boxShadow: '0 5px 15px rgba(0,0,0,0.2)' }}>
+            <h4>التنبيهات</h4>
+            {notifications.length === 0 ? <p>لا توجد تنبيهات</p> : notifications.map((n, i) => <p key={i} style={{ padding: '8px', borderBottom: '1px solid #eee' }}>{n.message}</p>)}
+            <button onClick={() => setShowNotifications(false)} style={{ marginTop: '10px', padding: '5px 10px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>إغلاق</button>
+          </div>
+        )}
 
-        {/* تبويبات */}
-        <div style={{ display: 'flex', gap: '10px', margin: '20px 0', borderBottom: '1px solid #ddd' }}>
-          {['users', 'medicines', 'orders'].map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} style={{ padding: '10px 20px', background: activeTab === tab ? '#28a745' : 'transparent', color: activeTab === tab ? 'white' : '#333', border: 'none', cursor: 'pointer' }}>{tab === 'users' ? '👥 المستخدمين' : tab === 'medicines' ? '💊 الأدوية' : '📦 الطلبات'}</button>
+        {/* تبويبات الأدمن */}
+        <div style={{ display: 'flex', gap: '10px', margin: '20px 0', borderBottom: '1px solid #ddd', flexWrap: 'wrap' }}>
+          {['dashboard', 'pending', 'driver-assign', 'users', 'medicines', 'orders', 'reports'].map(tab => (
+            <button key={tab} onClick={() => setAdminTab(tab)} style={{ padding: '10px 20px', background: adminTab === tab ? '#28a745' : 'transparent', color: adminTab === tab ? 'white' : '#333', border: 'none', cursor: 'pointer' }}>
+              {tab === 'dashboard' && '📊 إحصائيات'}
+              {tab === 'pending' && '⏳ طلبات للموافقة'}
+              {tab === 'driver-assign' && '🚚 تعيين سائق'}
+              {tab === 'users' && '👥 المستخدمين'}
+              {tab === 'medicines' && '💊 الأدوية'}
+              {tab === 'orders' && '📦 جميع الطلبات'}
+              {tab === 'reports' && '📈 تقارير'}
+            </button>
           ))}
         </div>
 
+        {/* لوحة الإحصائيات */}
+        {adminTab === 'dashboard' && (
+          <div>
+            <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', margin: '20px 0' }}>
+              <div style={{ background: '#17a2b8', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>🏥 الصيدليات: {stats.totalPharmacies || 0}</div>
+              <div style={{ background: '#28a745', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>🏭 شركات الأدوية: {stats.totalCompanies || 0}</div>
+              <div style={{ background: '#ffc107', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center' }}>🚗 السائقين: {stats.totalDrivers || 0}</div>
+              <div style={{ background: '#007bff', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>💊 الأدوية: {stats.totalMedicines || 0}</div>
+              <div style={{ background: '#6c5ce7', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>📦 الطلبات: {stats.totalOrders || 0}</div>
+              <div style={{ background: '#e84393', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>💰 الإيرادات: {(stats.totalRevenue || 0).toLocaleString()} ﷼</div>
+            </div>
+            <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+              <div style={{ background: '#fd7e14', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>⏳ طلبات معلقة: {stats.pendingOrders || 0}</div>
+              <div style={{ background: '#20c997', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>✅ طلبات منجزة: {stats.deliveredOrders || 0}</div>
+            </div>
+          </div>
+        )}
+
+        {/* طلبات تنتظر الموافقة */}
+        {adminTab === 'pending' && (
+          <div>
+            <h3>⏳ طلبات تنتظر موافقة الإدارة</h3>
+            {pendingOrders.map(o => (
+              <div key={o._id} style={{ border: '1px solid #ddd', margin: '10px 0', padding: '15px', borderRadius: '10px', background: '#fff3cd' }}>
+                <p><strong>الصيدلية:</strong> {o.pharmacy?.name}</p>
+                <p><strong>العنوان:</strong> {o.pharmacyAddress}</p>
+                <p><strong>المجموع:</strong> {o.totalPrice} ﷼</p>
+                <p><strong>التاريخ:</strong> {new Date(o.createdAt).toLocaleString()}</p>
+                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                  <button onClick={() => adminApproveOrder(o._id)} style={{ padding: '8px 15px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>✅ موافقة</button>
+                  <button onClick={() => adminRejectOrder(o._id)} style={{ padding: '8px 15px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>❌ رفض</button>
+                </div>
+              </div>
+            ))}
+            {pendingOrders.length === 0 && <p>لا توجد طلبات في انتظار الموافقة</p>}
+          </div>
+        )}
+
+        {/* تعيين سائق */}
+        {adminTab === 'driver-assign' && (
+          <div>
+            <h3>🚚 طلبات تنتظر تعيين سائق</h3>
+            {awaitingDriverOrders.map(o => (
+              <div key={o._id} style={{ border: '1px solid #ddd', margin: '10px 0', padding: '15px', borderRadius: '10px' }}>
+                <p><strong>الصيدلية:</strong> {o.pharmacy?.name}</p>
+                <p><strong>العنوان:</strong> {o.pharmacyAddress}</p>
+                <p><strong>المسافة المقدرة:</strong> {o.distance?.toFixed(2) || 0} كم</p>
+                <p><strong>سعر التوصيل:</strong> {o.deliveryFee} ﷼</p>
+                <select id={`driver-select-${o._id}`} style={{ padding: '8px', margin: '10px 0', width: '200px' }}>
+                  <option value="">اختر سائق</option>
+                  {drivers.map(d => <option key={d._id} value={d._id}>{d.name} - {d.phone}</option>)}
+                </select>
+                <button onClick={() => assignDriver(o._id, document.getElementById(`driver-select-${o._id}`).value)} style={{ padding: '8px 15px', background: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', display: 'block' }}>تعيين السائق</button>
+              </div>
+            ))}
+            {awaitingDriverOrders.length === 0 && <p>لا توجد طلبات في انتظار تعيين سائق</p>}
+          </div>
+        )}
+
         {/* المستخدمين */}
-        {activeTab === 'users' && (
+        {adminTab === 'users' && (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={{ border: '1px solid #ddd', padding: '8px' }}>الاسم</th><th>الجوال</th><th>الدور</th><th>العنوان</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+            <thead><tr><th>الاسم</th><th>الجوال</th><th>الدور</th><th>العنوان</th><th>الحالة</th><th>إجراءات</th></tr></thead>
             <tbody>
               {users.map(u => (
-                <tr key={u._id}><td style={{ border: '1px solid #ddd', padding: '8px' }}>{u.name}</td><td>{u.phone}</td><td>{u.role === 'pharmacy' ? 'صيدلية' : u.role === 'company' ? 'شركة' : u.role === 'driver' ? 'سائق' : 'مدير'}</td><td>{u.address || '-'}</td><td style={{ color: u.isActive ? 'green' : 'red' }}>{u.isActive ? 'نشط' : 'موقوف'}</td>
-                  <td><button onClick={() => toggleUserStatus(u._id, u.isActive)} style={{ background: u.isActive ? '#ffc107' : '#28a745', color: 'black', border: 'none', padding: '5px 10px', margin: '2px', borderRadius: '3px', cursor: 'pointer' }}>{u.isActive ? 'إيقاف' : 'تفعيل'}</button>
-                  <button onClick={() => deleteUser(u._id)} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '5px 10px', margin: '2px', borderRadius: '3px', cursor: 'pointer' }}>حذف</button></td></tr>
+                <tr key={u._id}><td>{u.name}</td><td>{u.phone}</td><td>{u.role === 'pharmacy' ? 'صيدلية' : u.role === 'company' ? 'شركة' : u.role === 'driver' ? 'سائق' : 'مدير'}</td><td>{u.address || '-'}</td><td style={{ color: u.isActive ? 'green' : 'red' }}>{u.isActive ? 'نشط' : 'موقوف'}</td>
+                <td><button onClick={() => toggleUserStatus(u._id, u.isActive)} style={{ background: u.isActive ? '#ffc107' : '#28a745', border: 'none', padding: '5px 10px', margin: '2px', borderRadius: '3px', cursor: 'pointer' }}>{u.isActive ? 'إيقاف' : 'تفعيل'}</button>
+                <button onClick={() => deleteUser(u._id)} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '5px 10px', margin: '2px', borderRadius: '3px', cursor: 'pointer' }}>حذف</button></td>
               ))}
             </tbody>
           </table>
         )}
 
         {/* الأدوية */}
-        {activeTab === 'medicines' && (
+        {adminTab === 'medicines' && (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th>الاسم</th><th>الشركة</th><th>الكمية</th><th>السعر</th><th>إجراءات</th></tr></thead>
             <tbody>
               {adminMedicines.map(m => (
                 <tr key={m._id}><td>{m.name}</td><td>{m.company}</td><td>{m.quantity}</td><td>{m.price} ﷼</td>
-                  <td><button onClick={async () => { if(window.confirm('حذف؟')){ await api.delete(`/admin/medicines/${m._id}`); fetchAdminMedicines(); } }} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '3px', cursor: 'pointer' }}>حذف</button></td></tr>
+                <td><button onClick={async () => { if(window.confirm('حذف؟')){ await api.delete(`/admin/medicines/${m._id}`); fetchAdminMedicines(); } }} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '3px', cursor: 'pointer' }}>حذف</button></td>
+                </tr>
               ))}
             </tbody>
           </table>
         )}
 
-        {/* الطلبات */}
-        {activeTab === 'orders' && adminOrders.map(o => (
+        {/* جميع الطلبات */}
+        {adminTab === 'orders' && adminOrders.map(o => (
           <div key={o._id} style={{ border: '1px solid #ddd', margin: '10px 0', padding: '10px', borderRadius: '5px' }}>
             <p><strong>رقم الطلب:</strong> {o._id}</p>
             <p><strong>الصيدلية:</strong> {o.pharmacy?.name || 'غير معروف'}</p>
             <p><strong>السائق:</strong> {o.driver?.name || 'لم يعين'}</p>
             <p><strong>المجموع:</strong> {o.totalPrice} ﷼ | <strong>التوصيل:</strong> {o.deliveryFee} ﷼</p>
-            <p><strong>الحالة:</strong> {o.status === 'pending' ? '⏳ قيد الانتظار' : o.status === 'confirmed' ? '✅ مؤكد' : o.status === 'shipped' ? '🚚 قيد التوصيل' : '📦 تم'}</p>
+            <p><strong>الحالة:</strong> {o.status === 'pending' ? '⏳ قيد الانتظار' : o.status === 'admin_approved' ? '✅ موافقة إدارة' : o.status === 'driver_assigned' ? '🚚 تم تعيين سائق' : o.status === 'driver_on_way' ? '🚗 السائق في الطريق' : o.status === 'delivered' ? '📦 تم التوصيل' : o.status === 'pharmacy_confirmed' ? '✅ تأكيد الصيدلية' : '🎉 مكتمل'}</p>
           </div>
         ))}
+
+        {/* التقارير */}
+        {adminTab === 'reports' && (
+          <div>
+            <div style={{ display: 'flex', gap: '10px', margin: '20px 0', alignItems: 'center', flexWrap: 'wrap' }}>
+              <input type="date" value={dateRange.start} onChange={(e) => setDateRange({...dateRange, start: e.target.value})} style={{ padding: '8px', borderRadius: '5px', border: '1px solid #ccc' }} />
+              <span>إلى</span>
+              <input type="date" value={dateRange.end} onChange={(e) => setDateRange({...dateRange, end: e.target.value})} style={{ padding: '8px', borderRadius: '5px', border: '1px solid #ccc' }} />
+              <button onClick={() => fetchReports(dateRange.start, dateRange.end)} style={{ padding: '8px 15px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>عرض التقرير</button>
+            </div>
+            {reports && (
+              <div>
+                <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', margin: '20px 0' }}>
+                  <div style={{ background: '#17a2b8', padding: '15px', borderRadius: '10px', flex: 1, color: 'white' }}>📊 إجمالي الطلبات: {reports.summary?.totalOrders || 0}</div>
+                  <div style={{ background: '#28a745', padding: '15px', borderRadius: '10px', flex: 1, color: 'white' }}>✅ الطلبات المكتملة: {reports.summary?.completedOrders || 0}</div>
+                  <div style={{ background: '#fd7e14', padding: '15px', borderRadius: '10px', flex: 1, color: 'white' }}>⏳ الطلبات المعلقة: {reports.summary?.pendingOrders || 0}</div>
+                  <div style={{ background: '#e84393', padding: '15px', borderRadius: '10px', flex: 1, color: 'white' }}>💰 إجمالي الإيرادات: {(reports.summary?.totalRevenue || 0).toLocaleString()} ﷼</div>
+                </div>
+                <h4>🏆 أفضل الصيدليات</h4>
+                {reports.topPharmacies?.map((p, i) => <div key={i}>#{i+1} {p.pharmacyInfo[0]?.name} - {p.totalOrders} طلب - {(p.totalSpent || 0).toLocaleString()} ﷼</div>)}
+                <h4>🏆 أفضل السائقين</h4>
+                {reports.topDrivers?.map((d, i) => <div key={i}>#{i+1} {d.driverInfo[0]?.name} - {d.totalDeliveries} توصيلة</div>)}
+              </div>
+            )}
+          </div>
+        )}
         {message && <p style={{ color: message.includes('✅') ? 'green' : 'red' }}>{message}</p>}
       </div>
     );
@@ -535,9 +753,24 @@ function App() {
       <div style={{ padding: '20px', fontFamily: 'Arial', direction: 'rtl' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h1>🏥 M.D.S pharmacies - صيدلية</h1>
-          <button onClick={handleLogout} style={{ padding: '10px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>تسجيل خروج</button>
+          <div>
+            {notifications.length > 0 && (
+              <button onClick={() => setShowNotifications(!showNotifications)} style={{ marginLeft: '10px', padding: '8px', background: '#ffc107', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
+                🔔 {notifications.length}
+              </button>
+            )}
+            <button onClick={handleLogout} style={{ padding: '10px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>تسجيل خروج</button>
+          </div>
         </div>
         <h3>مرحباً {user.name}</h3>
+
+        {showNotifications && (
+          <div style={{ position: 'fixed', top: '80px', right: '20px', width: '300px', background: 'white', border: '1px solid #ddd', borderRadius: '10px', padding: '15px', zIndex: 1000, boxShadow: '0 5px 15px rgba(0,0,0,0.2)' }}>
+            <h4>التنبيهات</h4>
+            {notifications.length === 0 ? <p>لا توجد تنبيهات</p> : notifications.map((n, i) => <p key={i} style={{ padding: '8px', borderBottom: '1px solid #eee' }}>{n.message}</p>)}
+            <button onClick={() => setShowNotifications(false)} style={{ marginTop: '10px', padding: '5px 10px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>إغلاق</button>
+          </div>
+        )}
 
         {showQuantityModal && selectedMedicine && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -597,7 +830,12 @@ function App() {
         <h3>📋 طلباتي السابقة</h3>
         {orders.map(o => (
           <div key={o._id} style={{ border: '1px solid #ddd', margin: '10px 0', padding: '10px', borderRadius: '5px' }}>
-            <p><strong>{new Date(o.createdAt).toLocaleString()}</strong> - {o.status === 'pending' ? '⏳ قيد الانتظار' : o.status === 'confirmed' ? '✅ مؤكد' : o.status === 'shipped' ? '🚚 قيد التوصيل' : '📦 تم'} - {o.totalPrice} ﷼</p>
+            <p><strong>{new Date(o.createdAt).toLocaleString()}</strong></p>
+            <p><strong>الحالة:</strong> {o.status === 'pending' ? '⏳ قيد الانتظار' : o.status === 'admin_approved' ? '✅ موافقة إدارة' : o.status === 'driver_assigned' ? '🚚 تم تعيين سائق' : o.status === 'driver_on_way' ? '🚗 السائق في الطريق' : o.status === 'delivered' ? '📦 تم التوصيل - يرجى تأكيد الاستلام' : o.status === 'pharmacy_confirmed' ? '✅ تم تأكيد الاستلام' : '🎉 مكتمل'}</p>
+            <p><strong>المجموع:</strong> {o.totalPrice} ﷼</p>
+            {o.status === 'delivered' && (
+              <button onClick={() => pharmacyConfirmReceipt(o._id)} style={{ padding: '8px 15px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>✅ تأكيد استلام الطلب</button>
+            )}
           </div>
         ))}
         {message && <p style={{ color: message.includes('✅') ? 'green' : 'red' }}>{message}</p>}
@@ -610,18 +848,38 @@ function App() {
     <div style={{ padding: '20px', fontFamily: 'Arial', direction: 'rtl' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h1>🚗 M.D.S pharmacies - سائق</h1>
-        <button onClick={handleLogout} style={{ padding: '10px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>تسجيل خروج</button>
+        <div>
+          {notifications.length > 0 && (
+            <button onClick={() => setShowNotifications(!showNotifications)} style={{ marginLeft: '10px', padding: '8px', background: '#ffc107', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
+              🔔 {notifications.length}
+            </button>
+          )}
+          <button onClick={handleLogout} style={{ padding: '10px 20px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>تسجيل خروج</button>
+        </div>
       </div>
       <h3>مرحباً {user.name}</h3>
+
+      {showNotifications && (
+        <div style={{ position: 'fixed', top: '80px', right: '20px', width: '300px', background: 'white', border: '1px solid #ddd', borderRadius: '10px', padding: '15px', zIndex: 1000, boxShadow: '0 5px 15px rgba(0,0,0,0.2)' }}>
+          <h4>التنبيهات</h4>
+          {notifications.length === 0 ? <p>لا توجد تنبيهات</p> : notifications.map((n, i) => <p key={i} style={{ padding: '8px', borderBottom: '1px solid #eee' }}>{n.message}</p>)}
+          <button onClick={() => setShowNotifications(false)} style={{ marginTop: '10px', padding: '5px 10px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>إغلاق</button>
+        </div>
+      )}
+
       <h3>📋 الطلبات المتاحة</h3>
       {orders.map(o => (
         <div key={o._id} style={{ border: '1px solid #ddd', margin: '10px 0', padding: '10px', borderRadius: '5px' }}>
           <p><strong>رقم الطلب:</strong> {o._id.slice(-8)}</p>
           <p><strong>العنوان:</strong> {o.pharmacyAddress || 'غير محدد'}</p>
           <p><strong>سعر التوصيل:</strong> {o.deliveryFee} ﷼ | <strong>الإجمالي:</strong> {o.totalPrice} ﷼</p>
-          <p><strong>الحالة:</strong> {o.status === 'pending' ? '⏳ قيد الانتظار' : o.status === 'confirmed' ? '✅ مؤكد' : o.status === 'shipped' ? '🚚 قيد التوصيل' : '📦 تم'}</p>
-          {o.status === 'confirmed' && <button onClick={() => updateOrderStatus(o._id, 'shipped')} style={{ padding: '5px 15px', background: '#ffc107', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🚚 بدء التوصيل</button>}
-          {o.status === 'shipped' && <button onClick={() => updateOrderStatus(o._id, 'delivered')} style={{ padding: '5px 15px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>✅ تم التوصيل</button>}
+          <p><strong>الحالة:</strong> {o.status === 'driver_assigned' ? '🚚 تم تعيينك لهذا الطلب' : o.status === 'driver_on_way' ? '🚗 في الطريق إلى الصيدلية' : o.status === 'delivered' ? '📦 تم التوصيل - في انتظار تأكيد الصيدلية' : o.status}</p>
+          {o.status === 'driver_assigned' && (
+            <button onClick={() => driverStartDelivery(o._id)} style={{ padding: '8px 15px', background: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🚚 بدء التوصيل</button>
+          )}
+          {o.status === 'driver_on_way' && (
+            <button onClick={() => driverConfirmDelivered(o._id)} style={{ padding: '8px 15px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>✅ تأكيد التوصيل</button>
+          )}
         </div>
       ))}
       {message && <p style={{ color: message.includes('✅') ? 'green' : 'red' }}>{message}</p>}
