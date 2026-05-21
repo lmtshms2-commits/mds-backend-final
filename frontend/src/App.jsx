@@ -58,7 +58,6 @@ function App() {
   // ============ التوصيل والموقع ============
   const [pharmacyAddress, setPharmacyAddress] = useState('');
   const [pharmacyLocation, setPharmacyLocation] = useState({ lat: 0, lng: 0 });
-  const [distance, setDistance] = useState(0);
   const [deliveryFee, setDeliveryFee] = useState(0);
   const DELIVERY_RATE_PER_KM = 1000;
 
@@ -84,7 +83,6 @@ function App() {
         fetchMedicines();
         fetchOrders('pharmacy');
         if (user.address) setPharmacyAddress(user.address);
-        if (user.location) setPharmacyLocation(user.location);
       } else if (user.role === 'driver') {
         fetchOrders('driver');
       } else if (user.role === 'admin') {
@@ -251,7 +249,7 @@ function App() {
     setMessage('تم تسجيل الخروج');
   };
 
-  // ============ إدارة الأدوية (لشركة الأدوية) ============
+  // ============ إدارة الأدوية ============
   const addMedicine = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -345,11 +343,10 @@ function App() {
         subtotal: getSubtotal(),
         deliveryFee: deliveryFee,
         totalPrice: getTotalWithDelivery(),
-        distance: distance
+        distance: 0
       });
       setCart([]);
       setDeliveryFee(0);
-      setDistance(0);
       setMessage('✅ تم إنشاء الطلب، في انتظار موافقة الإدارة');
       fetchOrders('pharmacy');
     } catch (error) {
@@ -366,17 +363,6 @@ function App() {
       setMessage('✅ تمت الموافقة على الطلب');
     } catch (error) {
       setMessage('❌ خطأ في الموافقة');
-    }
-  };
-
-  const adminRejectOrder = async (orderId) => {
-    const reason = prompt('سبب الرفض:');
-    try {
-      await api.put(`/admin/orders/${orderId}/reject`, { reason });
-      fetchPendingOrders();
-      setMessage('❌ تم رفض الطلب');
-    } catch (error) {
-      setMessage('❌ خطأ في الرفض');
     }
   };
 
@@ -562,22 +548,16 @@ function App() {
           </div>
         )}
 
-        {/* تبويبات الأدمن */}
         <div style={{ display: 'flex', gap: '10px', margin: '20px 0', borderBottom: '1px solid #ddd', flexWrap: 'wrap' }}>
-          {['dashboard', 'pending', 'driver-assign', 'users', 'medicines', 'orders', 'reports'].map(tab => (
-            <button key={tab} onClick={() => setAdminTab(tab)} style={{ padding: '10px 20px', background: adminTab === tab ? '#28a745' : 'transparent', color: adminTab === tab ? 'white' : '#333', border: 'none', cursor: 'pointer' }}>
-              {tab === 'dashboard' && '📊 إحصائيات'}
-              {tab === 'pending' && '⏳ طلبات للموافقة'}
-              {tab === 'driver-assign' && '🚚 تعيين سائق'}
-              {tab === 'users' && '👥 المستخدمين'}
-              {tab === 'medicines' && '💊 الأدوية'}
-              {tab === 'orders' && '📦 جميع الطلبات'}
-              {tab === 'reports' && '📈 تقارير'}
-            </button>
-          ))}
+          <button onClick={() => setAdminTab('dashboard')} style={{ padding: '10px 20px', background: adminTab === 'dashboard' ? '#28a745' : 'transparent', color: adminTab === 'dashboard' ? 'white' : '#333', border: 'none', cursor: 'pointer' }}>📊 إحصائيات</button>
+          <button onClick={() => setAdminTab('pending')} style={{ padding: '10px 20px', background: adminTab === 'pending' ? '#28a745' : 'transparent', color: adminTab === 'pending' ? 'white' : '#333', border: 'none', cursor: 'pointer' }}>⏳ طلبات للموافقة</button>
+          <button onClick={() => setAdminTab('driver-assign')} style={{ padding: '10px 20px', background: adminTab === 'driver-assign' ? '#28a745' : 'transparent', color: adminTab === 'driver-assign' ? 'white' : '#333', border: 'none', cursor: 'pointer' }}>🚚 تعيين سائق</button>
+          <button onClick={() => setAdminTab('users')} style={{ padding: '10px 20px', background: adminTab === 'users' ? '#28a745' : 'transparent', color: adminTab === 'users' ? 'white' : '#333', border: 'none', cursor: 'pointer' }}>👥 المستخدمين</button>
+          <button onClick={() => setAdminTab('medicines')} style={{ padding: '10px 20px', background: adminTab === 'medicines' ? '#28a745' : 'transparent', color: adminTab === 'medicines' ? 'white' : '#333', border: 'none', cursor: 'pointer' }}>💊 الأدوية</button>
+          <button onClick={() => setAdminTab('orders')} style={{ padding: '10px 20px', background: adminTab === 'orders' ? '#28a745' : 'transparent', color: adminTab === 'orders' ? 'white' : '#333', border: 'none', cursor: 'pointer' }}>📦 جميع الطلبات</button>
+          <button onClick={() => setAdminTab('reports')} style={{ padding: '10px 20px', background: adminTab === 'reports' ? '#28a745' : 'transparent', color: adminTab === 'reports' ? 'white' : '#333', border: 'none', cursor: 'pointer' }}>📈 تقارير</button>
         </div>
 
-        {/* لوحة الإحصائيات */}
         {adminTab === 'dashboard' && (
           <div>
             <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', margin: '20px 0' }}>
@@ -588,118 +568,50 @@ function App() {
               <div style={{ background: '#6c5ce7', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>📦 الطلبات: {stats.totalOrders || 0}</div>
               <div style={{ background: '#e84393', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>💰 الإيرادات: {(stats.totalRevenue || 0).toLocaleString()} ﷼</div>
             </div>
-            <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-              <div style={{ background: '#fd7e14', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>⏳ طلبات معلقة: {stats.pendingOrders || 0}</div>
-              <div style={{ background: '#20c997', padding: '15px', borderRadius: '10px', flex: 1, textAlign: 'center', color: 'white' }}>✅ طلبات منجزة: {stats.deliveredOrders || 0}</div>
-            </div>
           </div>
         )}
 
-        {/* طلبات تنتظر الموافقة */}
         {adminTab === 'pending' && (
           <div>
             <h3>⏳ طلبات تنتظر موافقة الإدارة</h3>
             {pendingOrders.map(o => (
               <div key={o._id} style={{ border: '1px solid #ddd', margin: '10px 0', padding: '15px', borderRadius: '10px', background: '#fff3cd' }}>
                 <p><strong>الصيدلية:</strong> {o.pharmacy?.name}</p>
-                <p><strong>العنوان:</strong> {o.pharmacyAddress}</p>
                 <p><strong>المجموع:</strong> {o.totalPrice} ﷼</p>
-                <p><strong>التاريخ:</strong> {new Date(o.createdAt).toLocaleString()}</p>
-                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                  <button onClick={() => adminApproveOrder(o._id)} style={{ padding: '8px 15px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>✅ موافقة</button>
-                  <button onClick={() => adminRejectOrder(o._id)} style={{ padding: '8px 15px', background: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>❌ رفض</button>
-                </div>
+                <button onClick={() => adminApproveOrder(o._id)} style={{ padding: '8px 15px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>✅ موافقة</button>
               </div>
             ))}
-            {pendingOrders.length === 0 && <p>لا توجد طلبات في انتظار الموافقة</p>}
           </div>
         )}
 
-        {/* تعيين سائق */}
         {adminTab === 'driver-assign' && (
           <div>
             <h3>🚚 طلبات تنتظر تعيين سائق</h3>
             {awaitingDriverOrders.map(o => (
               <div key={o._id} style={{ border: '1px solid #ddd', margin: '10px 0', padding: '15px', borderRadius: '10px' }}>
                 <p><strong>الصيدلية:</strong> {o.pharmacy?.name}</p>
-                <p><strong>العنوان:</strong> {o.pharmacyAddress}</p>
-                <p><strong>المسافة المقدرة:</strong> {o.distance?.toFixed(2) || 0} كم</p>
-                <p><strong>سعر التوصيل:</strong> {o.deliveryFee} ﷼</p>
                 <select id={`driver-select-${o._id}`} style={{ padding: '8px', margin: '10px 0', width: '200px' }}>
                   <option value="">اختر سائق</option>
-                  {drivers.map(d => <option key={d._id} value={d._id}>{d.name} - {d.phone}</option>)}
+                  {drivers.map(d => <option key={d._id} value={d._id}>{d.name}</option>)}
                 </select>
-                <button onClick={() => assignDriver(o._id, document.getElementById(`driver-select-${o._id}`).value)} style={{ padding: '8px 15px', background: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', display: 'block' }}>تعيين السائق</button>
+                <button onClick={() => assignDriver(o._id, document.getElementById(`driver-select-${o._id}`).value)} style={{ padding: '8px 15px', background: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>تعيين السائق</button>
               </div>
             ))}
-            {awaitingDriverOrders.length === 0 && <p>لا توجد طلبات في انتظار تعيين سائق</p>}
           </div>
         )}
 
-        {/* المستخدمين */}
         {adminTab === 'users' && (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th>الاسم</th><th>الجوال</th><th>الدور</th><th>العنوان</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-            <tbody>
-              {users.map(u => (
-                <tr key={u._id}><td>{u.name}</td><td>{u.phone}</td><td>{u.role === 'pharmacy' ? 'صيدلية' : u.role === 'company' ? 'شركة' : u.role === 'driver' ? 'سائق' : 'مدير'}</td><td>{u.address || '-'}</td><td style={{ color: u.isActive ? 'green' : 'red' }}>{u.isActive ? 'نشط' : 'موقوف'}</td>
-                <td><button onClick={() => toggleUserStatus(u._id, u.isActive)} style={{ background: u.isActive ? '#ffc107' : '#28a745', border: 'none', padding: '5px 10px', margin: '2px', borderRadius: '3px', cursor: 'pointer' }}>{u.isActive ? 'إيقاف' : 'تفعيل'}</button>
-                <button onClick={() => deleteUser(u._id)} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '5px 10px', margin: '2px', borderRadius: '3px', cursor: 'pointer' }}>حذف</button></td>
-              ))}
-            </tbody>
-          </table>
-        )}
-
-        {/* الأدوية */}
-        {adminTab === 'medicines' && (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th>الاسم</th><th>الشركة</th><th>الكمية</th><th>السعر</th><th>إجراءات</th></tr></thead>
-            <tbody>
-              {adminMedicines.map(m => (
-                <tr key={m._id}><td>{m.name}</td><td>{m.company}</td><td>{m.quantity}</td><td>{m.price} ﷼</td>
-                <td><button onClick={async () => { if(window.confirm('حذف؟')){ await api.delete(`/admin/medicines/${m._id}`); fetchAdminMedicines(); } }} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '3px', cursor: 'pointer' }}>حذف</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-
-        {/* جميع الطلبات */}
-        {adminTab === 'orders' && adminOrders.map(o => (
-          <div key={o._id} style={{ border: '1px solid #ddd', margin: '10px 0', padding: '10px', borderRadius: '5px' }}>
-            <p><strong>رقم الطلب:</strong> {o._id}</p>
-            <p><strong>الصيدلية:</strong> {o.pharmacy?.name || 'غير معروف'}</p>
-            <p><strong>السائق:</strong> {o.driver?.name || 'لم يعين'}</p>
-            <p><strong>المجموع:</strong> {o.totalPrice} ﷼ | <strong>التوصيل:</strong> {o.deliveryFee} ﷼</p>
-            <p><strong>الحالة:</strong> {o.status === 'pending' ? '⏳ قيد الانتظار' : o.status === 'admin_approved' ? '✅ موافقة إدارة' : o.status === 'driver_assigned' ? '🚚 تم تعيين سائق' : o.status === 'driver_on_way' ? '🚗 السائق في الطريق' : o.status === 'delivered' ? '📦 تم التوصيل' : o.status === 'pharmacy_confirmed' ? '✅ تأكيد الصيدلية' : '🎉 مكتمل'}</p>
-          </div>
-        ))}
-
-        {/* التقارير */}
-        {adminTab === 'reports' && (
           <div>
-            <div style={{ display: 'flex', gap: '10px', margin: '20px 0', alignItems: 'center', flexWrap: 'wrap' }}>
-              <input type="date" value={dateRange.start} onChange={(e) => setDateRange({...dateRange, start: e.target.value})} style={{ padding: '8px', borderRadius: '5px', border: '1px solid #ccc' }} />
-              <span>إلى</span>
-              <input type="date" value={dateRange.end} onChange={(e) => setDateRange({...dateRange, end: e.target.value})} style={{ padding: '8px', borderRadius: '5px', border: '1px solid #ccc' }} />
-              <button onClick={() => fetchReports(dateRange.start, dateRange.end)} style={{ padding: '8px 15px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>عرض التقرير</button>
-            </div>
-            {reports && (
-              <div>
-                <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', margin: '20px 0' }}>
-                  <div style={{ background: '#17a2b8', padding: '15px', borderRadius: '10px', flex: 1, color: 'white' }}>📊 إجمالي الطلبات: {reports.summary?.totalOrders || 0}</div>
-                  <div style={{ background: '#28a745', padding: '15px', borderRadius: '10px', flex: 1, color: 'white' }}>✅ الطلبات المكتملة: {reports.summary?.completedOrders || 0}</div>
-                  <div style={{ background: '#fd7e14', padding: '15px', borderRadius: '10px', flex: 1, color: 'white' }}>⏳ الطلبات المعلقة: {reports.summary?.pendingOrders || 0}</div>
-                  <div style={{ background: '#e84393', padding: '15px', borderRadius: '10px', flex: 1, color: 'white' }}>💰 إجمالي الإيرادات: {(reports.summary?.totalRevenue || 0).toLocaleString()} ﷼</div>
-                </div>
-                <h4>🏆 أفضل الصيدليات</h4>
-                {reports.topPharmacies?.map((p, i) => <div key={i}>#{i+1} {p.pharmacyInfo[0]?.name} - {p.totalOrders} طلب - {(p.totalSpent || 0).toLocaleString()} ﷼</div>)}
-                <h4>🏆 أفضل السائقين</h4>
-                {reports.topDrivers?.map((d, i) => <div key={i}>#{i+1} {d.driverInfo[0]?.name} - {d.totalDeliveries} توصيلة</div>)}
+            {users.map(u => (
+              <div key={u._id} style={{ border: '1px solid #ddd', margin: '10px 0', padding: '10px', borderRadius: '5px' }}>
+                {u.name} - {u.phone} - {u.role}
+                <button onClick={() => toggleUserStatus(u._id, u.isActive)} style={{ background: u.isActive ? '#ffc107' : '#28a745', border: 'none', padding: '5px 10px', margin: '2px', borderRadius: '3px', cursor: 'pointer' }}>{u.isActive ? 'إيقاف' : 'تفعيل'}</button>
+                <button onClick={() => deleteUser(u._id)} style={{ background: '#dc3545', color: 'white', border: 'none', padding: '5px 10px', margin: '2px', borderRadius: '3px', cursor: 'pointer' }}>حذف</button>
               </div>
-            )}
+            ))}
           </div>
         )}
+
         {message && <p style={{ color: message.includes('✅') ? 'green' : 'red' }}>{message}</p>}
       </div>
     );
@@ -738,10 +650,11 @@ function App() {
         </div>
 
         <h3>📋 قائمة الأدوية</h3>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr><th>الاسم</th><th>الشركة</th><th>الكمية</th><th>السعر</th></tr></thead>
-          <tbody>{medicines.map(m => (<tr key={m._id}><td>{m.name}</td><td>{m.company}</td><td>{m.quantity}</td><td>{m.price} ﷼</td></tr>))}</tbody>
-        </table>
+        {medicines.map(m => (
+          <div key={m._id} style={{ border: '1px solid #ddd', margin: '5px 0', padding: '8px', borderRadius: '5px' }}>
+            {m.name} - {m.company} - الكمية: {m.quantity} - السعر: {m.price} ﷼
+          </div>
+        ))}
         {message && <p style={{ color: message.includes('✅') ? 'green' : 'red' }}>{message}</p>}
       </div>
     );
@@ -767,7 +680,7 @@ function App() {
         {showNotifications && (
           <div style={{ position: 'fixed', top: '80px', right: '20px', width: '300px', background: 'white', border: '1px solid #ddd', borderRadius: '10px', padding: '15px', zIndex: 1000, boxShadow: '0 5px 15px rgba(0,0,0,0.2)' }}>
             <h4>التنبيهات</h4>
-            {notifications.length === 0 ? <p>لا توجد تنبيهات</p> : notifications.map((n, i) => <p key={i} style={{ padding: '8px', borderBottom: '1px solid #eee' }}>{n.message}</p>)}
+            {notifications.map((n, i) => <p key={i} style={{ padding: '8px', borderBottom: '1px solid #eee' }}>{n.message}</p>)}
             <button onClick={() => setShowNotifications(false)} style={{ marginTop: '10px', padding: '5px 10px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>إغلاق</button>
           </div>
         )}
@@ -818,7 +731,8 @@ function App() {
                     <input type="text" placeholder="ملاحظات" value={item.note || ''} onChange={(e) => updateCartNote(idx, e.target.value)} style={{ width: '100%', marginTop: '5px', padding: '5px', borderRadius: '5px' }} />
                   </div>
                 ))}
-                <hr /><p>مجموع الأدوية: {getSubtotal()} ﷼</p>
+                <hr />
+                <p>مجموع الأدوية: {getSubtotal()} ﷼</p>
                 <p>سعر التوصيل: {deliveryFee} ﷼</p>
                 <p><strong>الإجمالي: {getTotalWithDelivery()} ﷼</strong></p>
                 <button onClick={createOrder} style={{ padding: '10px 20px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', width: '100%' }}>📦 إنشاء طلب</button>
@@ -830,9 +744,7 @@ function App() {
         <h3>📋 طلباتي السابقة</h3>
         {orders.map(o => (
           <div key={o._id} style={{ border: '1px solid #ddd', margin: '10px 0', padding: '10px', borderRadius: '5px' }}>
-            <p><strong>{new Date(o.createdAt).toLocaleString()}</strong></p>
-            <p><strong>الحالة:</strong> {o.status === 'pending' ? '⏳ قيد الانتظار' : o.status === 'admin_approved' ? '✅ موافقة إدارة' : o.status === 'driver_assigned' ? '🚚 تم تعيين سائق' : o.status === 'driver_on_way' ? '🚗 السائق في الطريق' : o.status === 'delivered' ? '📦 تم التوصيل - يرجى تأكيد الاستلام' : o.status === 'pharmacy_confirmed' ? '✅ تم تأكيد الاستلام' : '🎉 مكتمل'}</p>
-            <p><strong>المجموع:</strong> {o.totalPrice} ﷼</p>
+            <p>{new Date(o.createdAt).toLocaleString()} - {o.status} - {o.totalPrice} ﷼</p>
             {o.status === 'delivered' && (
               <button onClick={() => pharmacyConfirmReceipt(o._id)} style={{ padding: '8px 15px', background: '#28a745', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>✅ تأكيد استلام الطلب</button>
             )}
@@ -862,7 +774,7 @@ function App() {
       {showNotifications && (
         <div style={{ position: 'fixed', top: '80px', right: '20px', width: '300px', background: 'white', border: '1px solid #ddd', borderRadius: '10px', padding: '15px', zIndex: 1000, boxShadow: '0 5px 15px rgba(0,0,0,0.2)' }}>
           <h4>التنبيهات</h4>
-          {notifications.length === 0 ? <p>لا توجد تنبيهات</p> : notifications.map((n, i) => <p key={i} style={{ padding: '8px', borderBottom: '1px solid #eee' }}>{n.message}</p>)}
+          {notifications.map((n, i) => <p key={i} style={{ padding: '8px', borderBottom: '1px solid #eee' }}>{n.message}</p>)}
           <button onClick={() => setShowNotifications(false)} style={{ marginTop: '10px', padding: '5px 10px', background: '#6c757d', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>إغلاق</button>
         </div>
       )}
@@ -870,10 +782,7 @@ function App() {
       <h3>📋 الطلبات المتاحة</h3>
       {orders.map(o => (
         <div key={o._id} style={{ border: '1px solid #ddd', margin: '10px 0', padding: '10px', borderRadius: '5px' }}>
-          <p><strong>رقم الطلب:</strong> {o._id.slice(-8)}</p>
-          <p><strong>العنوان:</strong> {o.pharmacyAddress || 'غير محدد'}</p>
-          <p><strong>سعر التوصيل:</strong> {o.deliveryFee} ﷼ | <strong>الإجمالي:</strong> {o.totalPrice} ﷼</p>
-          <p><strong>الحالة:</strong> {o.status === 'driver_assigned' ? '🚚 تم تعيينك لهذا الطلب' : o.status === 'driver_on_way' ? '🚗 في الطريق إلى الصيدلية' : o.status === 'delivered' ? '📦 تم التوصيل - في انتظار تأكيد الصيدلية' : o.status}</p>
+          <p>الطلب: {o._id.slice(-8)} - العنوان: {o.pharmacyAddress} - الإجمالي: {o.totalPrice} ﷼</p>
           {o.status === 'driver_assigned' && (
             <button onClick={() => driverStartDelivery(o._id)} style={{ padding: '8px 15px', background: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>🚚 بدء التوصيل</button>
           )}

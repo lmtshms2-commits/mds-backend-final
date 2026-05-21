@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Medicine = require('../models/Medicine');
 const Order = require('../models/Order');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 // Middleware للتحقق من صلاحية الأدمن
 const isAdmin = async (req, res, next) => {
@@ -11,7 +12,6 @@ const isAdmin = async (req, res, next) => {
   if (!token) return res.status(401).json({ message: 'غير مصرح' });
   
   try {
-    const jwt = require('jsonwebtoken');
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(decoded.id);
     if (user.role !== 'admin') return res.status(403).json({ message: 'ليس لديك صلاحية' });
@@ -31,8 +31,11 @@ router.get('/stats', isAdmin, async (req, res) => {
     const totalMedicines = await Medicine.countDocuments();
     const totalOrders = await Order.countDocuments();
     const pendingOrders = await Order.countDocuments({ status: 'pending' });
-    const deliveredOrders = await Order.countDocuments({ status: 'delivered' });
-    const totalRevenue = await Order.aggregate([{ $group: { _id: null, total: { $sum: '$totalPrice' } } }]);
+    const deliveredOrders = await Order.countDocuments({ status: 'completed' });
+    const totalRevenue = await Order.aggregate([
+      { $match: { status: 'completed' } },
+      { $group: { _id: null, total: { $sum: '$totalPrice' } } }
+    ]);
     
     res.json({
       totalPharmacies,
@@ -52,29 +55,8 @@ router.get('/stats', isAdmin, async (req, res) => {
 // ============ إدارة المستخدمين ============
 router.get('/users', isAdmin, async (req, res) => {
   try {
-    const { role, isActive } = req.query;
-    const filter = {};
-    if (role) filter.role = role;
-    if (isActive) filter.isActive = isActive === 'true';
-    const users = await User.find(filter).sort({ createdAt: -1 });
+    const users = await User.find().sort({ createdAt: -1 });
     res.json(users);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.post('/users', isAdmin, async (req, res) => {
-  try {
-    const { name, phone, email, address, role, password, commercialRegister, licenseNumber, idNumber, notes } = req.body;
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ 
-      name, phone, email, address, role, 
-      password: hashedPassword, 
-      commercialRegister, licenseNumber, idNumber, notes,
-      verified: true 
-    });
-    await user.save();
-    res.status(201).json({ message: 'تم إضافة المستخدم', user });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -82,12 +64,8 @@ router.post('/users', isAdmin, async (req, res) => {
 
 router.put('/users/:id', isAdmin, async (req, res) => {
   try {
-    const { name, phone, email, address, isActive, role, commercialRegister, licenseNumber, idNumber, notes } = req.body;
-    const updateData = { name, phone, email, address, isActive, role, commercialRegister, licenseNumber, idNumber, notes };
-    if (req.body.password) {
-      updateData.password = await bcrypt.hash(req.body.password, 10);
-    }
-    const user = await User.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    const { isActive, verified } = req.body;
+    const user = await User.findByIdAndUpdate(req.params.id, { isActive, verified }, { new: true });
     res.json({ message: 'تم تحديث المستخدم', user });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -113,17 +91,6 @@ router.get('/medicines', isAdmin, async (req, res) => {
   }
 });
 
-router.put('/medicines/:id', isAdmin, async (req, res) => {
-  try {
-    const { name, company, quantity, price, expiryDate } = req.body;
-    const medicine = await Medicine.findByIdAndUpdate(req.params.id, 
-      { name, company, quantity, price, expiryDate }, { new: true });
-    res.json(medicine);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 router.delete('/medicines/:id', isAdmin, async (req, res) => {
   try {
     await Medicine.findByIdAndDelete(req.params.id);
@@ -136,36 +103,96 @@ router.delete('/medicines/:id', isAdmin, async (req, res) => {
 // ============ إدارة الطلبات ============
 router.get('/orders', isAdmin, async (req, res) => {
   try {
-    const orders = await Order.find().populate('pharmacy', 'name phone').populate('driver', 'name phone').sort({ createdAt: -1 });
+    const orders = await Order.find().populate('pharmacy', 'name phone').sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-router.put('/orders/:id', isAdmin, async (req, res) => {
+// طلبات تنتظر موافقة الأدمن
+router.get('/orders/pending', isAdmin, async (req, res) => {
   try {
-    const { status, driver } = req.body;
-    const order = await Order.findByIdAndUpdate(req.params.id, { status, driver }, { new: true });
+    const orders = await Order.find({ status: 'pending' }).populate('pharmacy', 'name phone address');
+    res.json(orders);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// طلبات تنتظر تعيين سائق
+router.get('/orders/awaiting-driver', isAdmin, async (req, res) => {
+  try {
+    const orders = await Order.find({ status: 'admin_approved' }).populate('pharmacy', 'name phone address');
+    res.json(orders);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// موافقة الأدمن على الطلب
+router.put('/orders/:id/approve', isAdmin, async (req, res) => {
+  try {
+    const order = await Order.findByIdAndUpdate(req.params.id, {
+      status: 'admin_approved',
+      admin: req.user.id,
+      adminApprovedAt: new Date()
+    }, { new: true });
     res.json(order);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// ============ إحصائيات مفصلة ============
-router.get('/statistics', isAdmin, async (req, res) => {
+// الحصول على قائمة السائقين النشطين
+router.get('/drivers', isAdmin, async (req, res) => {
   try {
-    const monthlyOrders = await Order.aggregate([
-      { $group: { _id: { $month: '$createdAt' }, count: { $sum: 1 }, total: { $sum: '$totalPrice' } } }
+    const drivers = await User.find({ role: 'driver', isActive: true }).select('name phone');
+    res.json(drivers);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// تعيين سائق للطلب
+router.put('/orders/:id/assign-driver', isAdmin, async (req, res) => {
+  try {
+    const { driverId } = req.body;
+    const order = await Order.findByIdAndUpdate(req.params.id, {
+      status: 'driver_assigned',
+      driver: driverId,
+      driverAssignedAt: new Date()
+    }, { new: true });
+    res.json(order);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============ تقارير الإدارة ============
+router.get('/reports', isAdmin, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const filter = {};
+    if (startDate && endDate) {
+      filter.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    }
+    
+    const totalOrders = await Order.countDocuments(filter);
+    const completedOrders = await Order.countDocuments({ ...filter, status: 'completed' });
+    const totalRevenue = await Order.aggregate([
+      { $match: { ...filter, status: 'completed' } },
+      { $group: { _id: null, total: { $sum: '$totalPrice' } } }
     ]);
-    const topMedicines = await Order.aggregate([
-      { $unwind: '$medicines' },
-      { $group: { _id: '$medicines.name', totalQuantity: { $sum: '$medicines.quantity' } } },
-      { $sort: { totalQuantity: -1 } },
-      { $limit: 10 }
-    ]);
-    res.json({ monthlyOrders, topMedicines });
+    
+    res.json({
+      summary: {
+        totalOrders,
+        completedOrders,
+        pendingOrders: totalOrders - completedOrders,
+        totalRevenue: totalRevenue[0]?.total || 0
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
