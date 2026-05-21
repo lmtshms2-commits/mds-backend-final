@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 
 // ============ المسارات الثابتة أولاً (بدون :id) ============
 
-// تسجيل الدخول
+// ✅ تسجيل الدخول (يجب أن يكون أولاً)
 router.post('/login', async (req, res) => {
   try {
     const { phone, password, role } = req.body;
@@ -46,12 +46,11 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// تسجيل مستخدم جديد
+// ✅ تسجيل مستخدم جديد
 router.post('/register', async (req, res) => {
   try {
     const { name, phone, email, address, location, role, password, commercialRegister, licenseNumber, idNumber } = req.body;
     
-    // التحقق من وجود المستخدم
     const existingUser = await User.findOne({ phone });
     if (existingUser) {
       return res.status(400).json({ message: 'رقم الجوال مسجل مسبقاً' });
@@ -68,10 +67,9 @@ router.post('/register', async (req, res) => {
       role,
       password: hashedPassword,
       verified: false,
-      isActive: false  // يحتاج موافقة الأدمن
+      isActive: role === 'admin' ? true : false
     };
     
-    // إضافة معلومات إضافية حسب الدور
     if (role === 'company') userData.commercialRegister = commercialRegister;
     if (role === 'pharmacy') userData.licenseNumber = licenseNumber;
     if (role === 'driver') userData.idNumber = idNumber;
@@ -80,7 +78,7 @@ router.post('/register', async (req, res) => {
     await user.save();
     
     res.status(201).json({
-      message: 'تم التسجيل بنجاح، في انتظار موافقة الإدارة',
+      message: role === 'admin' ? 'تم تسجيل مدير النظام بنجاح' : 'تم التسجيل بنجاح، في انتظار موافقة الإدارة',
       userId: user._id
     });
   } catch (error) {
@@ -105,7 +103,7 @@ router.put('/location/:id', async (req, res) => {
 
 // ============ المسارات الديناميكية (التي تحتوي على :id) في الآخر ============
 
-// الحصول على معلومات المستخدم
+// ❌ هذا المسار يجب أن يكون في الآخر
 router.get('/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('-password');
